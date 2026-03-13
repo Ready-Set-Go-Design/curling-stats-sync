@@ -18,6 +18,7 @@ function buildSyncMenu_() {
   SpreadsheetApp.getUi()
     .createMenu('Webflow Sync')
     .addItem('Sync Standings', 'syncStandings')
+    .addItem('Refresh Standings from Webflow', 'refreshStandingsFromWebflow')
     .addItem('Sync Matches', 'syncMatches')
     .addItem('Sync Games', 'syncGames')
     .addItem('Sync Changed Rows (Current Tab)', 'syncChangedRows')
@@ -49,6 +50,10 @@ function syncMatches() {
 
 function syncGames() {
   syncSheetByName_('Games');
+}
+
+function refreshStandingsFromWebflow() {
+  refreshSheetFromWebflow_('Standings');
 }
 
 function syncAllTabs() {
@@ -194,6 +199,54 @@ function syncSheetByName_(sheetName) {
   console.log(`Manual sync completed for ${sheetName}: ${body}`);
 }
 
+function refreshSheetFromWebflow_(sheetName) {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error(`Sheet not found: ${sheetName}`);
+  }
+
+  const collectionKey = SHEET_TO_COLLECTION[sheetName];
+
+  if (!collectionKey) {
+    throw new Error(`Sheet is not configured for sync: ${sheetName}`);
+  }
+
+  const response = UrlFetchApp.fetch(`${HEROKU_SYNC_URL}/pull`, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-sync-secret': SYNC_SHARED_SECRET
+    },
+    payload: JSON.stringify({
+      collectionKey
+    }),
+    muteHttpExceptions: true
+  });
+
+  const status = response.getResponseCode();
+  const body = response.getContentText();
+
+  console.log(
+    JSON.stringify({
+      message: 'Webflow pull response received',
+      sheetName,
+      collectionKey,
+      status,
+      body
+    })
+  );
+
+  if (status >= 300) {
+    throw new Error(`Webflow pull failed for ${sheetName} (${status}): ${body}`);
+  }
+
+  const result = parseSyncResponse_(body);
+  writePulledRowsToSheet_(sheet, result);
+  console.log(`Webflow pull completed for ${sheetName}: ${body}`);
+}
+
 function syncDirtyRows_(sheet, collectionKey, rowNumbers) {
   const csvText = buildCsvFromSpecificRows_(sheet, rowNumbers);
 
@@ -299,6 +352,26 @@ function buildCsvFromSpecificRows_(sheet, rowNumbers) {
   }
 
   return [headerRow, ...dataRows].map((row) => row.map(escapeCsvCell_).join(',')).join('\n');
+}
+
+function writePulledRowsToSheet_(sheet, result) {
+  const headers = (result && result.headers) || [];
+  const rows = (result && result.rows) || [];
+
+  if (!headers.length) {
+    throw new Error('Pull result did not include headers.');
+  }
+
+  const values = [headers].concat(
+    rows.map((row) =>
+      headers.map((header) => normalizePulledCellValue_(header, row[header]))
+    )
+  );
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, values.length, headers.length).setValues(values);
+  applyDateFormatsToHeaders_(sheet, headers);
+  rebuildDirtyHighlights_(sheet);
 }
 
 function parseSyncResponse_(body) {
@@ -482,6 +555,44 @@ function setDateCellIfHeaderExists_(sheet, rowNumber, headerMap, header, isoValu
 
   range.setValue(dateValue);
   range.setNumberFormat('yyyy-mm-dd hh:mm:ss');
+}
+
+function normalizePulledCellValue_(header, value) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+
+  if (['Created On', 'Updated On', 'Published On', 'Date'].includes(header)) {
+    const dateValue = new Date(value);
+    return isNaN(dateValue.getTime()) ? value : dateValue;
+  }
+
+  if (value === 'TRUE') {
+    return true;
+  }
+
+  if (value === 'FALSE') {
+    return false;
+  }
+
+  return value;
+}
+
+function applyDateFormatsToHeaders_(sheet, headers) {
+  ['Date', 'Created On', 'Updated On', 'Published On'].forEach((header) => {
+    const columnIndex = headers.indexOf(header);
+
+    if (columnIndex !== -1 && sheet.getLastRow() >= 2) {
+      sheet.getRange(2, columnIndex + 1, sheet.getLastRow() - 1, 1).setNumberFormat('m/d/yyyy h:mm:ss');
+    }
+  });
+}
+
+function rebuildDirtyHighlights_(sheet) {
+  const dirtyRows = getDirtyRows_(sheet.getName());
+  dirtyRows.forEach((rowNumber) => {
+    highlightDirtyRow_(sheet, rowNumber);
+  });
 }
 
 function toSheetBoolean_(value) {

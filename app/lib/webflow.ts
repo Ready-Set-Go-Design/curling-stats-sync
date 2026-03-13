@@ -1,4 +1,4 @@
-import { CollectionConfig, CsvRow, SyncedItemResult, SyncMode, SyncOperation, SyncResult } from './types';
+import { CollectionConfig, CsvRow, PullResult, SyncedItemResult, SyncMode, SyncOperation, SyncResult } from './types';
 
 const API_BASE = 'https://api.webflow.com/v2';
 const CHUNK_SIZE = 100;
@@ -42,6 +42,7 @@ type WebflowListResponse = {
 };
 
 type ReferenceIndexes = Record<string, Map<string, string>>;
+type ReverseReferenceIndexes = Record<string, Map<string, string>>;
 
 function chunk<T>(items: T[], size: number): T[][] {
     const chunks: T[][] = [];
@@ -331,6 +332,88 @@ async function buildReferenceIndexes(token: string, config: CollectionConfig): P
     }
 
     return indexes;
+}
+
+async function buildReverseReferenceIndexes(token: string, config: CollectionConfig): Promise<ReverseReferenceIndexes> {
+    const indexes: ReverseReferenceIndexes = {};
+
+    for (const [csvColumn, referenceConfig] of Object.entries(config.references ?? {})) {
+        const items = await listAllItems(token, referenceConfig.collectionId);
+        indexes[csvColumn] = new Map(
+            items
+                .map((item) => {
+                    const lookupValue = normalizeLookupValue(item.fieldData[referenceConfig.lookupField]);
+                    return lookupValue ? ([item.id, lookupValue] as const) : null;
+                })
+                .filter((entry): entry is readonly [string, string] => entry !== null)
+        );
+    }
+
+    return indexes;
+}
+
+function formatValueForCsv(value: unknown): string {
+    if (value === null || value === undefined) {
+        return '';
+    }
+
+    if (typeof value === 'boolean') {
+        return value ? 'TRUE' : 'FALSE';
+    }
+
+    if (typeof value === 'number') {
+        return String(value);
+    }
+
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => formatValueForCsv(entry))
+            .filter(Boolean)
+            .join('|');
+    }
+
+    return String(value);
+}
+
+function buildPullRow(
+    item: WebflowItem,
+    config: CollectionConfig,
+    reverseReferenceIndexes: ReverseReferenceIndexes
+): CsvRow {
+    const row: CsvRow = {
+        'Collection ID': config.collectionId,
+        'Locale ID': item.cmsLocaleId ?? '',
+        'Item ID': item.id,
+        Archived: item.isArchived ? 'TRUE' : 'FALSE',
+        Draft: item.isDraft ? 'TRUE' : 'FALSE',
+        'Created On': item.createdOn ?? '',
+        'Updated On': item.lastUpdated ?? '',
+        'Published On': item.lastPublished ?? ''
+    };
+
+    for (const [csvColumn, fieldSlug] of Object.entries(config.fieldMap)) {
+        const referenceIndex = reverseReferenceIndexes[csvColumn];
+        const rawValue = item.fieldData[fieldSlug];
+
+        if (referenceIndex) {
+            if (Array.isArray(rawValue)) {
+                row[csvColumn] = rawValue
+                    .map((entry) => (typeof entry === 'string' ? referenceIndex.get(entry) ?? '' : ''))
+                    .filter(Boolean)
+                    .join('|');
+            } else if (typeof rawValue === 'string') {
+                row[csvColumn] = referenceIndex.get(rawValue) ?? '';
+            } else {
+                row[csvColumn] = '';
+            }
+
+            continue;
+        }
+
+        row[csvColumn] = formatValueForCsv(rawValue);
+    }
+
+    return row;
 }
 
 type CreateItemInput = {
@@ -657,5 +740,46 @@ export async function syncCollection(params: {
         dryRun,
         errors,
         items: syncedItems
+    };
+}
+
+export async function pullCollection(params: {
+    token: string;
+    config: CollectionConfig;
+    collectionKey: string;
+}): Promise<PullResult> {
+    const { token, config, collectionKey } = params;
+    const items = await listAllItems(token, config.collectionId);
+    const reverseReferenceIndexes = await buildReverseReferenceIndexes(token, config);
+    const rows = items
+        .map((item) => buildPullRow(item, config, reverseReferenceIndexes))
+        .sort((left, right) => {
+            const leftRank = Number(left.Rank ?? Number.MAX_SAFE_INTEGER);
+            const rightRank = Number(right.Rank ?? Number.MAX_SAFE_INTEGER);
+
+            if (!Number.isNaN(leftRank) && !Number.isNaN(rightRank) && leftRank !== rightRank) {
+                return leftRank - rightRank;
+            }
+
+            return String(left.Name ?? '').localeCompare(String(right.Name ?? ''));
+        });
+
+    return {
+        collectionKey,
+        collectionId: config.collectionId,
+        headers: [
+            'Name',
+            'Slug',
+            'Collection ID',
+            'Locale ID',
+            'Item ID',
+            'Archived',
+            'Draft',
+            'Created On',
+            'Updated On',
+            'Published On',
+            ...Object.keys(config.fieldMap).filter((header) => !['Name', 'Slug', 'Archived', 'Draft'].includes(header))
+        ],
+        rows
     };
 }

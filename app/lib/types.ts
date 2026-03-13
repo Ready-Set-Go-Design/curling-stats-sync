@@ -56,6 +56,10 @@ export type TriggerSyncRequest = {
   dryRun?: boolean;
 };
 
+export type PullRequest = {
+  collectionKey: string;
+};
+
 export type SyncOperation = {
   action: "create" | "update";
   matchValue: string;
@@ -92,4 +96,11 @@ export type SyncResult = {
   dryRun: boolean;
   errors: string[];
   items: SyncedItemResult[];
+};
+
+export type PullResult = {
+  collectionKey: string;
+  collectionId: string;
+  headers: string[];
+  rows: CsvRow[];
 };
