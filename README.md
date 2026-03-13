@@ -196,9 +196,9 @@ Manual Apps Script functions:
 
 Menu controls:
 
-- `Pause Sync`: temporarily disables all Webflow writes from both auto-sync and manual sync actions
-- `Resume Sync`: re-enables Webflow writes
-- `Show Sync Status`: shows whether sync is currently active or paused
+- the `Webflow Sync` menu shows either `Pause Sync` or `Resume Sync` depending on the current state
+- toggling sync temporarily disables or re-enables all Webflow writes from both auto-sync and manual sync actions
+- reload the spreadsheet after toggling if you want the menu label to refresh immediately
 
 Dirty row behavior:
 
