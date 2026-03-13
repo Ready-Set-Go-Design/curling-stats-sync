@@ -3,7 +3,6 @@ const SYNC_SHARED_SECRET = 'Zx3mPGHqA7kC2V9rT1yN4bW8sD6jL0fQ5uR8pK3vM9hS2cY7gF1n
 const DEFAULT_MODE = 'live';
 const MIN_SYNC_INTERVAL_MS = 5000;
 const DIRTY_ROW_BACKGROUND = '#fff2cc';
-const SYNC_PAUSED_KEY = 'sync-paused';
 
 const SHEET_TO_COLLECTION = {
   Standings: 'standings',
@@ -16,19 +15,14 @@ function onOpen() {
 }
 
 function buildSyncMenu_() {
-  const syncToggleLabel = isSyncPaused_() ? 'Resume Sync' : 'Pause Sync';
-  const menuLabel = isSyncPaused_() ? 'Webflow Sync (Paused)' : 'Webflow Sync';
-
   SpreadsheetApp.getUi()
-    .createMenu(menuLabel)
+    .createMenu('Webflow Sync')
     .addItem('Sync Standings', 'syncStandings')
     .addItem('Sync Matches', 'syncMatches')
     .addItem('Sync Games', 'syncGames')
     .addItem('Sync Changed Rows (Current Tab)', 'syncChangedRows')
     .addSeparator()
     .addItem('Sync All Score Tabs', 'syncAllTabs')
-    .addSeparator()
-    .addItem(syncToggleLabel, 'toggleSync')
     .addToUi();
 }
 
@@ -46,44 +40,24 @@ function installSyncTrigger() {
 }
 
 function syncStandings() {
-  if (!assertSyncEnabled_()) {
-    return;
-  }
-
   syncSheetByName_('Standings');
 }
 
 function syncMatches() {
-  if (!assertSyncEnabled_()) {
-    return;
-  }
-
   syncSheetByName_('Matches');
 }
 
 function syncGames() {
-  if (!assertSyncEnabled_()) {
-    return;
-  }
-
   syncSheetByName_('Games');
 }
 
 function syncAllTabs() {
-  if (!assertSyncEnabled_()) {
-    return;
-  }
-
   ['Standings', 'Matches', 'Games'].forEach((sheetName) => {
     syncSheetByName_(sheetName);
   });
 }
 
 function syncChangedRows() {
-  if (!assertSyncEnabled_()) {
-    return;
-  }
-
   const sheet = SpreadsheetApp.getActiveSheet();
   const sheetName = sheet.getName();
   const collectionKey = SHEET_TO_COLLECTION[sheetName];
@@ -100,22 +74,6 @@ function syncChangedRows() {
   }
 
   syncDirtyRows_(sheet, collectionKey, dirtyRows);
-}
-
-function toggleSync() {
-  const properties = PropertiesService.getScriptProperties();
-  const paused = isSyncPaused_();
-
-  if (paused) {
-    properties.deleteProperty(SYNC_PAUSED_KEY);
-    buildSyncMenu_();
-    SpreadsheetApp.getUi().alert('Webflow sync is now active.');
-    return;
-  }
-
-  properties.setProperty(SYNC_PAUSED_KEY, 'true');
-  buildSyncMenu_();
-  SpreadsheetApp.getUi().alert('Webflow sync is now paused.');
 }
 
 function handleSheetEdit(event) {
@@ -153,19 +111,6 @@ function handleSheetEdit(event) {
   markDirtyRow_(sheetName, editedRow);
   highlightDirtyRow_(sheet, editedRow);
   console.log(`Dirty row marked for "${sheetName}" row ${editedRow}`);
-}
-
-function isSyncPaused_() {
-  return PropertiesService.getScriptProperties().getProperty(SYNC_PAUSED_KEY) === 'true';
-}
-
-function assertSyncEnabled_() {
-  if (isSyncPaused_()) {
-    SpreadsheetApp.getUi().alert('Webflow sync is currently paused. Resume sync from the Webflow Sync menu to continue.');
-    return false;
-  }
-
-  return true;
 }
 
 function buildDirtyKey_(sheetName, rowNumber) {
