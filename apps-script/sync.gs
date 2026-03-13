@@ -140,6 +140,16 @@ function clearDirtyRow_(sheetName, rowNumber) {
   PropertiesService.getScriptProperties().deleteProperty(buildDirtyKey_(sheetName, rowNumber));
 }
 
+function clearAllDirtyRowsForSheet_(sheet) {
+  const sheetName = sheet.getName();
+  const dirtyRows = getDirtyRows_(sheetName);
+
+  dirtyRows.forEach((rowNumber) => {
+    clearDirtyRow_(sheetName, rowNumber);
+    clearDirtyRowHighlight_(sheet, rowNumber);
+  });
+}
+
 function getDirtyRows_(sheetName) {
   const properties = PropertiesService.getScriptProperties().getProperties();
   const prefix = `dirty-row-${sheetName}-`;
@@ -372,16 +382,19 @@ function writePulledRowsToSheet_(sheet, result) {
     throw new Error('Pull result did not include headers.');
   }
 
-  const values = [headers].concat(
-    rows.map((row) =>
-      headers.map((header) => normalizePulledCellValue_(header, row[header]))
-    )
+  const targetHeaders = ensureSheetHeaders_(sheet, headers);
+  const values = rows.map((row) =>
+    targetHeaders.map((header) => normalizePulledCellValue_(header, row[header]))
   );
 
-  sheet.clearContents();
-  sheet.getRange(1, 1, values.length, headers.length).setValues(values);
-  applyDateFormatsToHeaders_(sheet, headers);
-  rebuildDirtyHighlights_(sheet);
+  clearSheetDataRows_(sheet, targetHeaders.length);
+
+  if (values.length) {
+    sheet.getRange(2, 1, values.length, targetHeaders.length).setValues(values);
+  }
+
+  applyDateFormatsToHeaders_(sheet, targetHeaders);
+  clearAllDirtyRowsForSheet_(sheet);
 }
 
 function parseSyncResponse_(body) {
@@ -526,6 +539,36 @@ function getHeaderMap_(sheet) {
   });
 
   return headerMap;
+}
+
+function ensureSheetHeaders_(sheet, incomingHeaders) {
+  const currentLastColumn = sheet.getLastColumn();
+  const currentHeaders = currentLastColumn
+    ? sheet.getRange(1, 1, 1, currentLastColumn).getDisplayValues()[0]
+    : [];
+  const normalizedCurrentHeaders = currentHeaders.map((header) => String(header || '').trim());
+  const missingHeaders = incomingHeaders.filter((header) => !normalizedCurrentHeaders.includes(header));
+
+  if (!currentLastColumn) {
+    sheet.getRange(1, 1, 1, incomingHeaders.length).setValues([incomingHeaders]);
+    return incomingHeaders.slice();
+  }
+
+  if (missingHeaders.length) {
+    const startColumn = currentLastColumn + 1;
+    sheet.getRange(1, startColumn, 1, missingHeaders.length).setValues([missingHeaders]);
+    return normalizedCurrentHeaders.concat(missingHeaders);
+  }
+
+  return normalizedCurrentHeaders;
+}
+
+function clearSheetDataRows_(sheet, columnCount) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow >= 2 && columnCount > 0) {
+    sheet.getRange(2, 1, lastRow - 1, columnCount).clearContent();
+  }
 }
 
 function getColumnIndexByHeader_(sheet, header) {
