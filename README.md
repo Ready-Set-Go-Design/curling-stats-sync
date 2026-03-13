@@ -190,8 +190,22 @@ Manual Apps Script functions:
 - `syncStandings()`: syncs the full `Standings` tab
 - `syncMatches()`: syncs the full `Matches` tab
 - `syncGames()`: syncs the full `Games` tab
+- `syncChangedRows()`: syncs only dirty rows on the currently active mapped tab
 - `syncAllTabs()`: syncs only `Standings`, `Matches`, and `Games`
 - manual and row-level syncs both write Webflow IDs and timestamps back into the matching sheet rows
+
+Menu controls:
+
+- `Pause Sync`: temporarily disables all Webflow writes from both auto-sync and manual sync actions
+- `Resume Sync`: re-enables Webflow writes
+- `Show Sync Status`: shows whether sync is currently active or paused
+
+Dirty row behavior:
+
+- row edits on mapped tabs mark that row as dirty
+- if sync is paused, edits still mark rows dirty and highlight them, but nothing is sent to Webflow
+- successful row-level auto-sync clears the dirty flag for that row
+- `Sync Changed Rows (Current Tab)` sends only rows still marked dirty on the active tab
 
 ## Operational Notes
 

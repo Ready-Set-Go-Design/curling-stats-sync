@@ -2,6 +2,8 @@ const HEROKU_SYNC_URL = 'https://curling-stats-sync-2f2ddd38539a.herokuapp.com/a
 const SYNC_SHARED_SECRET = 'Zx3mPGHqA7kC2V9rT1yN4bW8sD6jL0fQ5uR8pK3vM9hS2cY7gF1nE4tB6wJ0z';
 const DEFAULT_MODE = 'live';
 const MIN_SYNC_INTERVAL_MS = 5000;
+const DIRTY_ROW_BACKGROUND = '#fff2cc';
+const SYNC_PAUSED_KEY = 'sync-paused';
 
 const SHEET_TO_COLLECTION = {
   Standings: 'standings',
@@ -15,8 +17,13 @@ function onOpen() {
     .addItem('Sync Standings', 'syncStandings')
     .addItem('Sync Matches', 'syncMatches')
     .addItem('Sync Games', 'syncGames')
+    .addItem('Sync Changed Rows (Current Tab)', 'syncChangedRows')
     .addSeparator()
     .addItem('Sync All Score Tabs', 'syncAllTabs')
+    .addSeparator()
+    .addItem('Pause Sync', 'pauseSync')
+    .addItem('Resume Sync', 'resumeSync')
+    .addItem('Show Sync Status', 'showSyncStatus')
     .addToUi();
 }
 
@@ -34,21 +41,59 @@ function installSyncTrigger() {
 }
 
 function syncStandings() {
+  assertSyncEnabled_();
   syncSheetByName_('Standings');
 }
 
 function syncMatches() {
+  assertSyncEnabled_();
   syncSheetByName_('Matches');
 }
 
 function syncGames() {
+  assertSyncEnabled_();
   syncSheetByName_('Games');
 }
 
 function syncAllTabs() {
+  assertSyncEnabled_();
   ['Standings', 'Matches', 'Games'].forEach((sheetName) => {
     syncSheetByName_(sheetName);
   });
+}
+
+function syncChangedRows() {
+  assertSyncEnabled_();
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const sheetName = sheet.getName();
+  const collectionKey = SHEET_TO_COLLECTION[sheetName];
+
+  if (!collectionKey) {
+    throw new Error(`Current sheet is not configured for sync: ${sheetName}`);
+  }
+
+  const dirtyRows = getDirtyRows_(sheetName);
+
+  if (!dirtyRows.length) {
+    console.log(`Sync skipped: no dirty rows for "${sheetName}"`);
+    return;
+  }
+
+  syncDirtyRows_(sheet, collectionKey, dirtyRows);
+}
+
+function pauseSync() {
+  PropertiesService.getScriptProperties().setProperty(SYNC_PAUSED_KEY, 'true');
+  SpreadsheetApp.getUi().alert('Webflow sync is now paused.');
+}
+
+function resumeSync() {
+  PropertiesService.getScriptProperties().deleteProperty(SYNC_PAUSED_KEY);
+  SpreadsheetApp.getUi().alert('Webflow sync is now active.');
+}
+
+function showSyncStatus() {
+  SpreadsheetApp.getUi().alert(isSyncPaused_() ? 'Webflow sync is currently paused.' : 'Webflow sync is currently active.');
 }
 
 function handleSheetEdit(event) {
@@ -80,6 +125,14 @@ function handleSheetEdit(event) {
 
   if (editedRow === 1) {
     console.log('Sync skipped: header row edited');
+    return;
+  }
+
+  markDirtyRow_(sheetName, editedRow);
+  highlightDirtyRow_(sheet, editedRow);
+
+  if (isSyncPaused_()) {
+    console.log(`Sync skipped: paused for "${sheetName}" row ${editedRow}`);
     return;
   }
 
@@ -154,6 +207,8 @@ function handleSheetEdit(event) {
 
     writeBackRowSyncResult_(sheet, editedRow, result);
     recordSync_(sheetName, editedRow);
+    clearDirtyRow_(sheetName, editedRow);
+    clearDirtyRowHighlight_(sheet, editedRow);
     console.log(`Synced ${sheetName}: ${body}`);
   } finally {
     lock.releaseLock();
@@ -168,6 +223,16 @@ function shouldSkipSync_(sheetName, rowNumber) {
   return Date.now() - lastSync < MIN_SYNC_INTERVAL_MS;
 }
 
+function isSyncPaused_() {
+  return PropertiesService.getScriptProperties().getProperty(SYNC_PAUSED_KEY) === 'true';
+}
+
+function assertSyncEnabled_() {
+  if (isSyncPaused_()) {
+    throw new Error('Webflow sync is currently paused. Resume sync from the Webflow Sync menu to continue.');
+  }
+}
+
 function recordSync_(sheetName, rowNumber) {
   const properties = PropertiesService.getScriptProperties();
   properties.setProperty(buildSyncKey_(sheetName, rowNumber), String(Date.now()));
@@ -175,6 +240,29 @@ function recordSync_(sheetName, rowNumber) {
 
 function buildSyncKey_(sheetName, rowNumber) {
   return `last-sync-${sheetName}-${rowNumber}`;
+}
+
+function buildDirtyKey_(sheetName, rowNumber) {
+  return `dirty-row-${sheetName}-${rowNumber}`;
+}
+
+function markDirtyRow_(sheetName, rowNumber) {
+  PropertiesService.getScriptProperties().setProperty(buildDirtyKey_(sheetName, rowNumber), '1');
+}
+
+function clearDirtyRow_(sheetName, rowNumber) {
+  PropertiesService.getScriptProperties().deleteProperty(buildDirtyKey_(sheetName, rowNumber));
+}
+
+function getDirtyRows_(sheetName) {
+  const properties = PropertiesService.getScriptProperties().getProperties();
+  const prefix = `dirty-row-${sheetName}-`;
+
+  return Object.keys(properties)
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => Number(key.slice(prefix.length)))
+    .filter((rowNumber) => Number.isInteger(rowNumber) && rowNumber > 1)
+    .sort((left, right) => left - right);
 }
 
 function syncSheetByName_(sheetName) {
@@ -235,6 +323,53 @@ function syncSheetByName_(sheetName) {
   console.log(`Manual sync completed for ${sheetName}: ${body}`);
 }
 
+function syncDirtyRows_(sheet, collectionKey, rowNumbers) {
+  const csvText = buildCsvFromSpecificRows_(sheet, rowNumbers);
+
+  if (!csvText) {
+    console.log(`Sync skipped: no dirty row data for "${sheet.getName()}"`);
+    return;
+  }
+
+  const response = UrlFetchApp.fetch(HEROKU_SYNC_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-sync-secret': SYNC_SHARED_SECRET
+    },
+    payload: JSON.stringify({
+      collectionKey,
+      csvText,
+      mode: DEFAULT_MODE,
+      dryRun: false
+    }),
+    muteHttpExceptions: true
+  });
+
+  const status = response.getResponseCode();
+  const body = response.getContentText();
+  const result = parseSyncResponse_(body);
+
+  console.log(
+    JSON.stringify({
+      message: 'Dirty row sync response received',
+      sheetName: sheet.getName(),
+      collectionKey,
+      rowNumbers,
+      status,
+      body
+    })
+  );
+
+  if (status >= 300) {
+    throw new Error(`Dirty row sync failed for ${sheet.getName()} (${status}): ${body}`);
+  }
+
+  writeBackSheetSyncResults_(sheet, result);
+  clearDirtyRowsFromResult_(sheet.getName(), rowNumbers, result);
+  console.log(`Dirty row sync completed for ${sheet.getName()}: ${body}`);
+}
+
 function buildCsvFromEditedRow_(sheet, rowNumber) {
   const lastColumn = sheet.getLastColumn();
 
@@ -243,7 +378,7 @@ function buildCsvFromEditedRow_(sheet, rowNumber) {
   }
 
   const headerRow = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
-  const rowValues = sheet.getRange(rowNumber, 1, 1, lastColumn).getDisplayValues()[0];
+  const rowValues = sheet.getRange(rowNumber, 1, 1, lastColumn).getValues()[0];
 
   if (!rowValues.some((cell) => cell !== '')) {
     return '';
@@ -253,16 +388,42 @@ function buildCsvFromEditedRow_(sheet, rowNumber) {
 }
 
 function buildCsvFromSheet_(sheet) {
-  const values = sheet.getDataRange().getDisplayValues();
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
 
-  if (values.length <= 1) {
+  if (!lastRow || !lastColumn) {
     return '';
   }
 
-  const [headerRow, ...rows] = values;
+  const headerRow = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+
+  if (lastRow <= 1) {
+    return '';
+  }
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
   const dataRows = rows.filter((row) => row.some((cell) => cell !== ''));
 
   if (dataRows.length === 0) {
+    return '';
+  }
+
+  return [headerRow, ...dataRows].map((row) => row.map(escapeCsvCell_).join(',')).join('\n');
+}
+
+function buildCsvFromSpecificRows_(sheet, rowNumbers) {
+  const lastColumn = sheet.getLastColumn();
+
+  if (!lastColumn || !rowNumbers.length) {
+    return '';
+  }
+
+  const headerRow = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  const dataRows = rowNumbers
+    .map((rowNumber) => sheet.getRange(rowNumber, 1, 1, lastColumn).getValues()[0])
+    .filter((row) => row.some((cell) => cell !== ''));
+
+  if (!dataRows.length) {
     return '';
   }
 
@@ -324,6 +485,57 @@ function writeBackSheetSyncResults_(sheet, result) {
   });
 }
 
+function clearDirtyRowsFromResult_(sheetName, candidateRows, result) {
+  const items = (result && result.items) || [];
+
+  if (!candidateRows.length || !items.length) {
+    return;
+  }
+
+  const clearedRows = new Set();
+  const rowLookup = new Map();
+  items.forEach((item) => {
+    const rowIndex = Number(item.rowIndex || 0);
+    if (rowIndex >= 2) {
+      const originalRowNumber = candidateRows[rowIndex - 2];
+      if (originalRowNumber) {
+        rowLookup.set(originalRowNumber, true);
+      }
+    }
+  });
+
+  candidateRows.forEach((rowNumber) => {
+    if (rowLookup.get(rowNumber) && !clearedRows.has(rowNumber)) {
+      clearDirtyRow_(sheetName, rowNumber);
+      const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+      if (sheet) {
+        clearDirtyRowHighlight_(sheet, rowNumber);
+      }
+      clearedRows.add(rowNumber);
+    }
+  });
+}
+
+function highlightDirtyRow_(sheet, rowNumber) {
+  const lastColumn = sheet.getLastColumn();
+
+  if (!lastColumn || rowNumber < 2) {
+    return;
+  }
+
+  sheet.getRange(rowNumber, 1, 1, lastColumn).setBackground(DIRTY_ROW_BACKGROUND);
+}
+
+function clearDirtyRowHighlight_(sheet, rowNumber) {
+  const lastColumn = sheet.getLastColumn();
+
+  if (!lastColumn || rowNumber < 2) {
+    return;
+  }
+
+  sheet.getRange(rowNumber, 1, 1, lastColumn).setBackground(null);
+}
+
 function writeBackItemToRow_(sheet, rowNumber, item) {
   const headerMap = getHeaderMap_(sheet);
 
@@ -332,9 +544,9 @@ function writeBackItemToRow_(sheet, rowNumber, item) {
   setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Item ID', item.itemId || '');
   setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Archived', toSheetBoolean_(item.isArchived));
   setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Draft', toSheetBoolean_(item.isDraft));
-  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Created On', item.createdOn || '');
-  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Updated On', item.updatedOn || '');
-  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Published On', item.publishedOn || '');
+  setDateCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Created On', item.createdOn);
+  setDateCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Updated On', item.updatedOn);
+  setDateCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Published On', item.publishedOn);
 
   if (item.slug) {
     setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Slug', item.slug);
@@ -376,6 +588,31 @@ function setCellIfHeaderExists_(sheet, rowNumber, headerMap, header, value) {
   sheet.getRange(rowNumber, columnIndex).setValue(value);
 }
 
+function setDateCellIfHeaderExists_(sheet, rowNumber, headerMap, header, isoValue) {
+  const columnIndex = headerMap.get(header);
+
+  if (!columnIndex) {
+    return;
+  }
+
+  const range = sheet.getRange(rowNumber, columnIndex);
+
+  if (!isoValue) {
+    range.setValue('');
+    return;
+  }
+
+  const dateValue = new Date(isoValue);
+
+  if (isNaN(dateValue.getTime())) {
+    range.setValue(isoValue);
+    return;
+  }
+
+  range.setValue(dateValue);
+  range.setNumberFormat('yyyy-mm-dd hh:mm:ss');
+}
+
 function toSheetBoolean_(value) {
   if (typeof value === 'boolean') {
     return value;
@@ -385,11 +622,27 @@ function toSheetBoolean_(value) {
 }
 
 function escapeCsvCell_(value) {
-  const stringValue = String(value ?? '');
+  const stringValue = formatCellForCsv_(value);
 
   if (!/[",\n]/.test(stringValue)) {
     return stringValue;
   }
 
   return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+function formatCellForCsv_(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return isNaN(value.getTime()) ? '' : value.toISOString();
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'TRUE' : 'FALSE';
+  }
+
+  return String(value);
 }
