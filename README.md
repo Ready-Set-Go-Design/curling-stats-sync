@@ -178,9 +178,7 @@ Recommended flow:
 
 Behavior:
 
-- edits on mapped tabs trigger a sync
-- the script sends only the edited row, plus the header row, as `csvText` to `POST /api/sync`
-- the script debounces rapid edits for 5 seconds per tab
+- edits on mapped tabs mark rows as dirty and highlight them
 - the app performs the Webflow sync server-side
 - the default Apps Script mode is `live`, so successful edits publish to live Webflow content immediately
 - successful syncs write Webflow metadata back into the sheet, including `Collection ID`, `Locale ID`, `Item ID`, and timestamp fields when those columns exist
@@ -204,7 +202,7 @@ Dirty row behavior:
 
 - row edits on mapped tabs mark that row as dirty
 - if sync is paused, edits still mark rows dirty and highlight them, but nothing is sent to Webflow
-- successful row-level auto-sync clears the dirty flag for that row
+- successful manual syncs clear the dirty flag for rows they sync successfully
 - `Sync Changed Rows (Current Tab)` sends only rows still marked dirty on the active tab
 
 ## Operational Notes

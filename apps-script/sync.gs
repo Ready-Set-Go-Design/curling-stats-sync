@@ -12,10 +12,15 @@ const SHEET_TO_COLLECTION = {
 };
 
 function onOpen() {
+  buildSyncMenu_();
+}
+
+function buildSyncMenu_() {
   const syncToggleLabel = isSyncPaused_() ? 'Resume Sync' : 'Pause Sync';
+  const menuLabel = isSyncPaused_() ? 'Webflow Sync (Paused)' : 'Webflow Sync';
 
   SpreadsheetApp.getUi()
-    .createMenu('Webflow Sync')
+    .createMenu(menuLabel)
     .addItem('Sync Standings', 'syncStandings')
     .addItem('Sync Matches', 'syncMatches')
     .addItem('Sync Games', 'syncGames')
@@ -103,17 +108,19 @@ function toggleSync() {
 
   if (paused) {
     properties.deleteProperty(SYNC_PAUSED_KEY);
-    SpreadsheetApp.getUi().alert('Webflow sync is now active. Reload the spreadsheet to refresh the menu label.');
+    buildSyncMenu_();
+    SpreadsheetApp.getUi().alert('Webflow sync is now active.');
     return;
   }
 
   properties.setProperty(SYNC_PAUSED_KEY, 'true');
-  SpreadsheetApp.getUi().alert('Webflow sync is now paused. Reload the spreadsheet to refresh the menu label.');
+  buildSyncMenu_();
+  SpreadsheetApp.getUi().alert('Webflow sync is now paused.');
 }
 
 function handleSheetEdit(event) {
   if (!event || !event.range) {
-    console.log('Sync skipped: missing event or range');
+    console.log('Dirty-row tracking skipped: missing event or range');
     return;
   }
 
@@ -134,108 +141,18 @@ function handleSheetEdit(event) {
   );
 
   if (!collectionKey) {
-    console.log(`Sync skipped: unmapped sheet "${sheetName}"`);
+    console.log(`Dirty-row tracking skipped: unmapped sheet "${sheetName}"`);
     return;
   }
 
   if (editedRow === 1) {
-    console.log('Sync skipped: header row edited');
+    console.log('Dirty-row tracking skipped: header row edited');
     return;
   }
 
   markDirtyRow_(sheetName, editedRow);
   highlightDirtyRow_(sheet, editedRow);
-
-  if (isSyncPaused_()) {
-    console.log(`Sync skipped: paused for "${sheetName}" row ${editedRow}`);
-    return;
-  }
-
-  const lock = LockService.getScriptLock();
-
-  if (!lock.tryLock(1000)) {
-    console.log('Sync skipped: unable to acquire lock');
-    return;
-  }
-
-  try {
-    if (shouldSkipSync_(sheetName, editedRow)) {
-      console.log(`Sync skipped: debounce active for "${sheetName}" row ${editedRow}`);
-      return;
-    }
-
-    const csvText = buildCsvFromEditedRow_(sheet, editedRow);
-
-    if (!csvText) {
-      console.log(`Sync skipped: row ${editedRow} is empty`);
-      return;
-    }
-
-    const csvLines = csvText.split('\n');
-    const headers = csvLines[0] ? csvLines[0].split(',') : [];
-    const rowPreview = csvLines[1] ?? '';
-
-    console.log(
-      JSON.stringify({
-        message: 'Prepared CSV payload',
-        sheetName,
-        collectionKey,
-        editedRow,
-        headers,
-        rowPreview
-      })
-    );
-
-    const response = UrlFetchApp.fetch(HEROKU_SYNC_URL, {
-      method: 'post',
-      contentType: 'application/json',
-      headers: {
-        'x-sync-secret': SYNC_SHARED_SECRET
-      },
-      payload: JSON.stringify({
-        collectionKey,
-        csvText,
-        mode: DEFAULT_MODE,
-        dryRun: false
-      }),
-      muteHttpExceptions: true
-    });
-
-    const status = response.getResponseCode();
-    const body = response.getContentText();
-    const result = parseSyncResponse_(body);
-
-    console.log(
-      JSON.stringify({
-        message: 'Sync response received',
-        sheetName,
-        collectionKey,
-        editedRow,
-        status,
-        body
-      })
-    );
-
-    if (status >= 300) {
-      throw new Error(`Sync failed (${status}): ${body}`);
-    }
-
-    writeBackRowSyncResult_(sheet, editedRow, result);
-    recordSync_(sheetName, editedRow);
-    clearDirtyRow_(sheetName, editedRow);
-    clearDirtyRowHighlight_(sheet, editedRow);
-    console.log(`Synced ${sheetName}: ${body}`);
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function shouldSkipSync_(sheetName, rowNumber) {
-  const properties = PropertiesService.getScriptProperties();
-  const key = buildSyncKey_(sheetName, rowNumber);
-  const lastSync = Number(properties.getProperty(key) || '0');
-
-  return Date.now() - lastSync < MIN_SYNC_INTERVAL_MS;
+  console.log(`Dirty row marked for "${sheetName}" row ${editedRow}`);
 }
 
 function isSyncPaused_() {
@@ -249,15 +166,6 @@ function assertSyncEnabled_() {
   }
 
   return true;
-}
-
-function recordSync_(sheetName, rowNumber) {
-  const properties = PropertiesService.getScriptProperties();
-  properties.setProperty(buildSyncKey_(sheetName, rowNumber), String(Date.now()));
-}
-
-function buildSyncKey_(sheetName, rowNumber) {
-  return `last-sync-${sheetName}-${rowNumber}`;
 }
 
 function buildDirtyKey_(sheetName, rowNumber) {
