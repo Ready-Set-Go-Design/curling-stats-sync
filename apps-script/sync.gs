@@ -20,7 +20,9 @@ function buildSyncMenu_() {
     .addItem('Sync Standings', 'syncStandings')
     .addItem('Refresh Standings from Webflow', 'refreshStandingsFromWebflow')
     .addItem('Sync Matches', 'syncMatches')
+    .addItem('Refresh Matches from Webflow', 'refreshMatchesFromWebflow')
     .addItem('Sync Games', 'syncGames')
+    .addItem('Refresh Games from Webflow', 'refreshGamesFromWebflow')
     .addItem('Sync Changed Rows (Current Tab)', 'syncChangedRows')
     .addSeparator()
     .addItem('Sync All Score Tabs', 'syncAllTabs')
@@ -54,6 +56,14 @@ function syncGames() {
 
 function refreshStandingsFromWebflow() {
   refreshSheetFromWebflow_('Standings');
+}
+
+function refreshMatchesFromWebflow() {
+  refreshSheetFromWebflow_('Matches');
+}
+
+function refreshGamesFromWebflow() {
+  refreshSheetFromWebflow_('Games');
 }
 
 function syncAllTabs() {
