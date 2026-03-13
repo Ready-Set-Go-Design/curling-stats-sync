@@ -151,6 +151,26 @@ function getOptionId(field: WebflowCollectionField, rawValue: string): string | 
     return byName?.id;
 }
 
+function getOptionName(field: WebflowCollectionField, rawValue: unknown): string {
+    if (typeof rawValue !== 'string') {
+        return formatValueForCsv(rawValue);
+    }
+
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    const options = field.validations?.options ?? [];
+    const directId = options.find((option) => option.id === trimmed);
+    if (directId) {
+        return directId.name;
+    }
+
+    const byName = options.find((option) => option.name.toLowerCase() === trimmed.toLowerCase());
+    return byName?.name ?? trimmed;
+}
+
 function buildFieldData(
     row: CsvRow,
     config: CollectionConfig,
@@ -378,7 +398,8 @@ function formatValueForCsv(value: unknown): string {
 function buildPullRow(
     item: WebflowItem,
     config: CollectionConfig,
-    reverseReferenceIndexes: ReverseReferenceIndexes
+    reverseReferenceIndexes: ReverseReferenceIndexes,
+    schemaFieldsBySlug: Map<string, WebflowCollectionField>
 ): CsvRow {
     const row: CsvRow = {
         'Collection ID': config.collectionId,
@@ -394,6 +415,7 @@ function buildPullRow(
     for (const [csvColumn, fieldSlug] of Object.entries(config.fieldMap)) {
         const referenceIndex = reverseReferenceIndexes[csvColumn];
         const rawValue = item.fieldData[fieldSlug];
+        const schemaField = schemaFieldsBySlug.get(fieldSlug);
 
         if (referenceIndex) {
             if (Array.isArray(rawValue)) {
@@ -407,6 +429,11 @@ function buildPullRow(
                 row[csvColumn] = '';
             }
 
+            continue;
+        }
+
+        if (schemaField?.type === 'Option') {
+            row[csvColumn] = getOptionName(schemaField, rawValue);
             continue;
         }
 
@@ -749,10 +776,12 @@ export async function pullCollection(params: {
     collectionKey: string;
 }): Promise<PullResult> {
     const { token, config, collectionKey } = params;
+    const collection = await getCollection(token, config.collectionId);
+    const schemaFieldsBySlug = new Map(collection.fields.map((field) => [field.slug, field]));
     const items = await listAllItems(token, config.collectionId);
     const reverseReferenceIndexes = await buildReverseReferenceIndexes(token, config);
     const rows = items
-        .map((item) => buildPullRow(item, config, reverseReferenceIndexes))
+        .map((item) => buildPullRow(item, config, reverseReferenceIndexes, schemaFieldsBySlug))
         .sort((left, right) => {
             const leftRank = Number(left.Rank ?? Number.MAX_SAFE_INTEGER);
             const rightRank = Number(right.Rank ?? Number.MAX_SAFE_INTEGER);
