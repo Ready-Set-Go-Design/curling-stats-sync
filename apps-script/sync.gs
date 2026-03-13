@@ -135,6 +135,7 @@ function handleSheetEdit(event) {
 
     const status = response.getResponseCode();
     const body = response.getContentText();
+    const result = parseSyncResponse_(body);
 
     console.log(
       JSON.stringify({
@@ -151,6 +152,7 @@ function handleSheetEdit(event) {
       throw new Error(`Sync failed (${status}): ${body}`);
     }
 
+    writeBackRowSyncResult_(sheet, editedRow, result);
     recordSync_(sheetName, editedRow);
     console.log(`Synced ${sheetName}: ${body}`);
   } finally {
@@ -213,6 +215,7 @@ function syncSheetByName_(sheetName) {
 
   const status = response.getResponseCode();
   const body = response.getContentText();
+  const result = parseSyncResponse_(body);
 
   console.log(
     JSON.stringify({
@@ -228,6 +231,7 @@ function syncSheetByName_(sheetName) {
     throw new Error(`Manual sync failed for ${sheetName} (${status}): ${body}`);
   }
 
+  writeBackSheetSyncResults_(sheet, result);
   console.log(`Manual sync completed for ${sheetName}: ${body}`);
 }
 
@@ -263,6 +267,121 @@ function buildCsvFromSheet_(sheet) {
   }
 
   return [headerRow, ...dataRows].map((row) => row.map(escapeCsvCell_).join(',')).join('\n');
+}
+
+function parseSyncResponse_(body) {
+  return JSON.parse(body);
+}
+
+function writeBackRowSyncResult_(sheet, rowNumber, result) {
+  const item = result && result.items && result.items[0];
+
+  if (!item) {
+    return;
+  }
+
+  writeBackItemToRow_(sheet, rowNumber, item);
+}
+
+function writeBackSheetSyncResults_(sheet, result) {
+  const items = (result && result.items) || [];
+
+  if (!items.length) {
+    return;
+  }
+
+  const slugColumn = getColumnIndexByHeader_(sheet, 'Slug');
+
+  if (!slugColumn) {
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return;
+  }
+
+  const slugValues = sheet.getRange(2, slugColumn, lastRow - 1, 1).getDisplayValues();
+  const rowBySlug = new Map();
+
+  slugValues.forEach((entry, index) => {
+    const slug = String(entry[0] || '').trim();
+
+    if (slug) {
+      rowBySlug.set(slug, index + 2);
+    }
+  });
+
+  items.forEach((item) => {
+    const matchValue = String(item.matchValue || '').trim();
+    const slug = String(item.slug || '').trim();
+    const rowNumber = (matchValue && rowBySlug.get(matchValue)) || (slug && rowBySlug.get(slug)) || null;
+
+    if (rowNumber) {
+      writeBackItemToRow_(sheet, rowNumber, item);
+    }
+  });
+}
+
+function writeBackItemToRow_(sheet, rowNumber, item) {
+  const headerMap = getHeaderMap_(sheet);
+
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Collection ID', item.collectionId || '');
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Locale ID', item.cmsLocaleId || '');
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Item ID', item.itemId || '');
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Archived', toSheetBoolean_(item.isArchived));
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Draft', toSheetBoolean_(item.isDraft));
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Created On', item.createdOn || '');
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Updated On', item.updatedOn || '');
+  setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Published On', item.publishedOn || '');
+
+  if (item.slug) {
+    setCellIfHeaderExists_(sheet, rowNumber, headerMap, 'Slug', item.slug);
+  }
+}
+
+function getHeaderMap_(sheet) {
+  const lastColumn = sheet.getLastColumn();
+
+  if (!lastColumn) {
+    return new Map();
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  const headerMap = new Map();
+
+  headers.forEach((header, index) => {
+    const normalizedHeader = String(header || '').trim();
+
+    if (normalizedHeader) {
+      headerMap.set(normalizedHeader, index + 1);
+    }
+  });
+
+  return headerMap;
+}
+
+function getColumnIndexByHeader_(sheet, header) {
+  return getHeaderMap_(sheet).get(header) || null;
+}
+
+function setCellIfHeaderExists_(sheet, rowNumber, headerMap, header, value) {
+  const columnIndex = headerMap.get(header);
+
+  if (!columnIndex) {
+    return;
+  }
+
+  sheet.getRange(rowNumber, columnIndex).setValue(value);
+}
+
+function toSheetBoolean_(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  return '';
 }
 
 function escapeCsvCell_(value) {

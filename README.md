@@ -183,6 +183,7 @@ Behavior:
 - the script debounces rapid edits for 5 seconds per tab
 - the app performs the Webflow sync server-side
 - the default Apps Script mode is `live`, so successful edits publish to live Webflow content immediately
+- successful syncs write Webflow metadata back into the sheet, including `Collection ID`, `Locale ID`, `Item ID`, and timestamp fields when those columns exist
 
 Manual Apps Script functions:
 
@@ -190,6 +191,7 @@ Manual Apps Script functions:
 - `syncMatches()`: syncs the full `Matches` tab
 - `syncGames()`: syncs the full `Games` tab
 - `syncAllTabs()`: syncs only `Standings`, `Matches`, and `Games`
+- manual and row-level syncs both write Webflow IDs and timestamps back into the matching sheet rows
 
 ## Operational Notes
 

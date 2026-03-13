@@ -1,10 +1,16 @@
-import { CollectionConfig, CsvRow, SyncMode, SyncOperation, SyncResult } from './types';
+import { CollectionConfig, CsvRow, SyncedItemResult, SyncMode, SyncOperation, SyncResult } from './types';
 
 const API_BASE = 'https://api.webflow.com/v2';
 const CHUNK_SIZE = 100;
 
 type WebflowItem = {
     id: string;
+    cmsLocaleId?: string;
+    lastPublished?: string | null;
+    lastUpdated?: string;
+    createdOn?: string;
+    isArchived?: boolean;
+    isDraft?: boolean;
     fieldData: Record<string, unknown>;
 };
 
@@ -327,64 +333,152 @@ async function buildReferenceIndexes(token: string, config: CollectionConfig): P
     return indexes;
 }
 
+type CreateItemInput = {
+    rowIndex: number;
+    matchValue: string;
+    fieldData: Record<string, unknown>;
+    isArchived?: boolean;
+    isDraft?: boolean;
+};
+
+type UpdateItemInput = {
+    rowIndex: number;
+    matchValue: string;
+    id: string;
+    fieldData: Record<string, unknown>;
+    isArchived?: boolean;
+    isDraft?: boolean;
+};
+
+function toSyncedItemResult(
+    action: 'create' | 'update',
+    collectionId: string,
+    input: CreateItemInput | UpdateItemInput,
+    item?: WebflowItem
+): SyncedItemResult {
+    return {
+        action,
+        rowIndex: input.rowIndex,
+        matchValue: input.matchValue,
+        collectionId,
+        itemId: item?.id ?? ('id' in input ? input.id : undefined),
+        cmsLocaleId: item?.cmsLocaleId,
+        slug: typeof item?.fieldData?.slug === 'string' ? item.fieldData.slug : undefined,
+        name: typeof item?.fieldData?.name === 'string' ? item.fieldData.name : undefined,
+        isArchived: item?.isArchived,
+        isDraft: item?.isDraft,
+        createdOn: item?.createdOn,
+        updatedOn: item?.lastUpdated,
+        publishedOn: item?.lastPublished ?? null
+    };
+}
+
 async function createItems(
     token: string,
     collectionId: string,
     mode: SyncMode,
-    items: Array<{ fieldData: Record<string, unknown> }>
-): Promise<void> {
+    items: CreateItemInput[]
+): Promise<SyncedItemResult[]> {
     if (items.length === 0) {
-        return;
+        return [];
     }
 
     const path = mode === 'live' ? `/collections/${collectionId}/items/live` : `/collections/${collectionId}/items`;
+    const results: SyncedItemResult[] = [];
 
     for (const group of chunk(items, CHUNK_SIZE)) {
-        await webflowFetch(token, path, {
+        const response = await webflowFetch<{ items: WebflowItem[] }>(token, path, {
             method: 'POST',
-            body: JSON.stringify({ items: group })
+            body: JSON.stringify({
+                items: group.map((item) => ({
+                    fieldData: item.fieldData,
+                    isArchived: item.isArchived,
+                    isDraft: item.isDraft
+                }))
+            })
+        });
+
+        group.forEach((item, index) => {
+            results.push(toSyncedItemResult('create', collectionId, item, response.items?.[index]));
         });
     }
+
+    return results;
 }
 
 async function updateItems(
     token: string,
     collectionId: string,
     mode: SyncMode,
-    items: Array<{ id: string; fieldData: Record<string, unknown> }>
-): Promise<void> {
+    items: UpdateItemInput[]
+): Promise<SyncedItemResult[]> {
     if (items.length === 0) {
-        return;
+        return [];
     }
+
+    const results: SyncedItemResult[] = [];
 
     if (mode === 'live') {
         for (const item of items) {
             try {
-                await webflowFetch(token, `/collections/${collectionId}/items/live`, {
+                const response = await webflowFetch<{ items: WebflowItem[] }>(token, `/collections/${collectionId}/items/live`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ items: [item] })
+                    body: JSON.stringify({
+                        items: [
+                            {
+                                id: item.id,
+                                fieldData: item.fieldData,
+                                isArchived: item.isArchived,
+                                isDraft: item.isDraft
+                            }
+                        ]
+                    })
                 });
+                results.push(toSyncedItemResult('update', collectionId, item, response.items?.[0]));
             } catch (error) {
                 if (!isLiveResourceNotFoundError(error)) {
                     throw error;
                 }
 
-                await webflowFetch(token, `/collections/${collectionId}/items`, {
+                const response = await webflowFetch<{ items: WebflowItem[] }>(token, `/collections/${collectionId}/items`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ items: [item] })
+                    body: JSON.stringify({
+                        items: [
+                            {
+                                id: item.id,
+                                fieldData: item.fieldData,
+                                isArchived: item.isArchived,
+                                isDraft: item.isDraft
+                            }
+                        ]
+                    })
                 });
+                results.push(toSyncedItemResult('update', collectionId, item, response.items?.[0]));
             }
         }
 
-        return;
+        return results;
     }
 
     for (const group of chunk(items, CHUNK_SIZE)) {
-        await webflowFetch(token, `/collections/${collectionId}/items`, {
+        const response = await webflowFetch<{ items: WebflowItem[] }>(token, `/collections/${collectionId}/items`, {
             method: 'PATCH',
-            body: JSON.stringify({ items: group })
+            body: JSON.stringify({
+                items: group.map((item) => ({
+                    id: item.id,
+                    fieldData: item.fieldData,
+                    isArchived: item.isArchived,
+                    isDraft: item.isDraft
+                }))
+            })
+        });
+
+        group.forEach((item, index) => {
+            results.push(toSyncedItemResult('update', collectionId, item, response.items?.[index]));
         });
     }
+
+    return results;
 }
 
 function planOperations(
@@ -434,6 +528,7 @@ function planOperations(
             if (matchValue && itemById.has(matchValue)) {
                 operations.push({
                     action: 'update',
+                    rowIndex: index + 2,
                     id: matchValue,
                     matchValue,
                     fieldData,
@@ -445,6 +540,7 @@ function planOperations(
 
             operations.push({
                 action: 'create',
+                rowIndex: index + 2,
                 matchValue,
                 fieldData,
                 isArchived: built.isArchived,
@@ -462,6 +558,7 @@ function planOperations(
         if (existing) {
             operations.push({
                 action: 'update',
+                rowIndex: index + 2,
                 id: existing.id,
                 matchValue,
                 fieldData,
@@ -473,6 +570,7 @@ function planOperations(
 
         operations.push({
             action: 'create',
+            rowIndex: index + 2,
             matchValue,
             fieldData,
             isArchived: built.isArchived,
@@ -505,6 +603,8 @@ export async function syncCollection(params: {
     const creates = operations
         .filter((operation) => operation.action === 'create')
         .map((operation) => ({
+            rowIndex: operation.rowIndex ?? 0,
+            matchValue: operation.matchValue,
             fieldData: operation.fieldData,
             isArchived: operation.isArchived,
             isDraft: operation.isDraft
@@ -516,16 +616,36 @@ export async function syncCollection(params: {
                 operation.action === 'update' && Boolean(operation.id)
         )
         .map((operation) => ({
+            rowIndex: operation.rowIndex ?? 0,
+            matchValue: operation.matchValue,
             id: operation.id,
             fieldData: operation.fieldData,
             isArchived: operation.isArchived,
             isDraft: operation.isDraft
         }));
 
-    if (!dryRun) {
-        await createItems(token, config.collectionId, mode, creates);
-        await updateItems(token, config.collectionId, mode, updates);
-    }
+    const syncedItems: SyncedItemResult[] = dryRun
+        ? operations.map((operation) => ({
+              action: operation.action,
+              rowIndex: operation.rowIndex ?? 0,
+              matchValue: operation.matchValue,
+              collectionId: config.collectionId,
+              itemId: operation.id,
+              slug:
+                  typeof operation.fieldData.slug === 'string'
+                      ? operation.fieldData.slug
+                      : undefined,
+              name:
+                  typeof operation.fieldData.name === 'string'
+                      ? operation.fieldData.name
+                      : undefined,
+              isArchived: operation.isArchived,
+              isDraft: operation.isDraft
+          }))
+        : [
+              ...(await createItems(token, config.collectionId, mode, creates)),
+              ...(await updateItems(token, config.collectionId, mode, updates))
+          ];
 
     return {
         collectionKey,
@@ -535,6 +655,7 @@ export async function syncCollection(params: {
         updateCount: updates.length,
         mode,
         dryRun,
-        errors
+        errors,
+        items: syncedItems
     };
 }

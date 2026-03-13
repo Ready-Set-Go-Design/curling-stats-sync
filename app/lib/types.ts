@@ -63,6 +63,23 @@ export type SyncOperation = {
   isArchived?: boolean;
   isDraft?: boolean;
   id?: string;
+  rowIndex?: number;
+};
+
+export type SyncedItemResult = {
+  action: "create" | "update";
+  rowIndex: number;
+  matchValue: string;
+  collectionId: string;
+  itemId?: string;
+  cmsLocaleId?: string;
+  slug?: string;
+  name?: string;
+  isArchived?: boolean;
+  isDraft?: boolean;
+  createdOn?: string;
+  updatedOn?: string;
+  publishedOn?: string | null;
 };
 
 export type SyncResult = {
@@ -74,4 +91,5 @@ export type SyncResult = {
   mode: SyncMode;
   dryRun: boolean;
   errors: string[];
+  items: SyncedItemResult[];
 };
