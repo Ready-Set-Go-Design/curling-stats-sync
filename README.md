@@ -174,6 +174,7 @@ Recommended flow:
    - `SHEET_TO_COLLECTION`
 5. Run `installSyncTrigger()` once from the Apps Script editor to create the installable `onEdit` trigger.
 6. Approve the script permissions when prompted.
+7. Reload the spreadsheet to see the `Webflow Sync` menu for manual sync actions.
 
 Behavior:
 
@@ -182,6 +183,13 @@ Behavior:
 - the script debounces rapid edits for 5 seconds per tab
 - the app performs the Webflow sync server-side
 - the default Apps Script mode is `live`, so successful edits publish to live Webflow content immediately
+
+Manual Apps Script functions:
+
+- `syncStandings()`: syncs the full `Standings` tab
+- `syncMatches()`: syncs the full `Matches` tab
+- `syncGames()`: syncs the full `Games` tab
+- `syncAllTabs()`: syncs only `Standings`, `Matches`, and `Games`
 
 ## Operational Notes
 

@@ -9,6 +9,17 @@ const SHEET_TO_COLLECTION = {
   Games: 'games'
 };
 
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Webflow Sync')
+    .addItem('Sync Standings', 'syncStandings')
+    .addItem('Sync Matches', 'syncMatches')
+    .addItem('Sync Games', 'syncGames')
+    .addSeparator()
+    .addItem('Sync All Score Tabs', 'syncAllTabs')
+    .addToUi();
+}
+
 function installSyncTrigger() {
   const spreadsheet = SpreadsheetApp.getActive();
   const existingTriggers = ScriptApp.getProjectTriggers();
@@ -20,6 +31,24 @@ function installSyncTrigger() {
   });
 
   ScriptApp.newTrigger('handleSheetEdit').forSpreadsheet(spreadsheet).onEdit().create();
+}
+
+function syncStandings() {
+  syncSheetByName_('Standings');
+}
+
+function syncMatches() {
+  syncSheetByName_('Matches');
+}
+
+function syncGames() {
+  syncSheetByName_('Games');
+}
+
+function syncAllTabs() {
+  ['Standings', 'Matches', 'Games'].forEach((sheetName) => {
+    syncSheetByName_(sheetName);
+  });
 }
 
 function handleSheetEdit(event) {
@@ -146,6 +175,62 @@ function buildSyncKey_(sheetName, rowNumber) {
   return `last-sync-${sheetName}-${rowNumber}`;
 }
 
+function syncSheetByName_(sheetName) {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error(`Sheet not found: ${sheetName}`);
+  }
+
+  const collectionKey = SHEET_TO_COLLECTION[sheetName];
+
+  if (!collectionKey) {
+    throw new Error(`Sheet is not configured for sync: ${sheetName}`);
+  }
+
+  const csvText = buildCsvFromSheet_(sheet);
+
+  if (!csvText) {
+    console.log(`Sync skipped: no data rows found for "${sheetName}"`);
+    return;
+  }
+
+  const response = UrlFetchApp.fetch(HEROKU_SYNC_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-sync-secret': SYNC_SHARED_SECRET
+    },
+    payload: JSON.stringify({
+      collectionKey,
+      csvText,
+      mode: DEFAULT_MODE,
+      dryRun: false
+    }),
+    muteHttpExceptions: true
+  });
+
+  const status = response.getResponseCode();
+  const body = response.getContentText();
+
+  console.log(
+    JSON.stringify({
+      message: 'Manual sync response received',
+      sheetName,
+      collectionKey,
+      status,
+      body
+    })
+  );
+
+  if (status >= 300) {
+    throw new Error(`Manual sync failed for ${sheetName} (${status}): ${body}`);
+  }
+
+  console.log(`Manual sync completed for ${sheetName}: ${body}`);
+}
+
 function buildCsvFromEditedRow_(sheet, rowNumber) {
   const lastColumn = sheet.getLastColumn();
 
@@ -161,6 +246,23 @@ function buildCsvFromEditedRow_(sheet, rowNumber) {
   }
 
   return [headerRow, rowValues].map((row) => row.map(escapeCsvCell_).join(',')).join('\n');
+}
+
+function buildCsvFromSheet_(sheet) {
+  const values = sheet.getDataRange().getDisplayValues();
+
+  if (values.length <= 1) {
+    return '';
+  }
+
+  const [headerRow, ...rows] = values;
+  const dataRows = rows.filter((row) => row.some((cell) => cell !== ''));
+
+  if (dataRows.length === 0) {
+    return '';
+  }
+
+  return [headerRow, ...dataRows].map((row) => row.map(escapeCsvCell_).join(',')).join('\n');
 }
 
 function escapeCsvCell_(value) {
