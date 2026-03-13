@@ -181,6 +181,7 @@ Behavior:
 - the script sends only the edited row, plus the header row, as `csvText` to `POST /api/sync`
 - the script debounces rapid edits for 5 seconds per tab
 - the app performs the Webflow sync server-side
+- the default Apps Script mode is `live`, so successful edits publish to live Webflow content immediately
 
 ## Operational Notes
 

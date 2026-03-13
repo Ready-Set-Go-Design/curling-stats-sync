@@ -250,6 +250,14 @@ function getMatchValue(row: CsvRow, config: CollectionConfig): string {
     return (row[config.match.csvColumn] ?? '').trim();
 }
 
+function isLiveResourceNotFoundError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false;
+    }
+
+    return error.message.includes('Webflow API 404:') && error.message.includes('"code":"resource_not_found"');
+}
+
 async function webflowFetch<T>(token: string, path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
         ...init,
@@ -349,10 +357,30 @@ async function updateItems(
         return;
     }
 
-    const path = mode === 'live' ? `/collections/${collectionId}/items/live` : `/collections/${collectionId}/items`;
+    if (mode === 'live') {
+        for (const item of items) {
+            try {
+                await webflowFetch(token, `/collections/${collectionId}/items/live`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ items: [item] })
+                });
+            } catch (error) {
+                if (!isLiveResourceNotFoundError(error)) {
+                    throw error;
+                }
+
+                await webflowFetch(token, `/collections/${collectionId}/items`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ items: [item] })
+                });
+            }
+        }
+
+        return;
+    }
 
     for (const group of chunk(items, CHUNK_SIZE)) {
-        await webflowFetch(token, path, {
+        await webflowFetch(token, `/collections/${collectionId}/items`, {
             method: 'PATCH',
             body: JSON.stringify({ items: group })
         });
