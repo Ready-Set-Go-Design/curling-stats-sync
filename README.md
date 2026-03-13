@@ -185,21 +185,15 @@ Behavior:
 
 Manual Apps Script functions:
 
-- `syncStandings()`: syncs the full `Standings` tab
-- `refreshStandingsFromWebflow()`: refreshes the full `Standings` tab from Webflow
-- `syncMatches()`: syncs the full `Matches` tab
-- `refreshMatchesFromWebflow()`: refreshes the full `Matches` tab from Webflow
-- `syncGames()`: syncs the full `Games` tab
-- `refreshGamesFromWebflow()`: refreshes the full `Games` tab from Webflow
 - `syncChangedRows()`: syncs only dirty rows on the currently active mapped tab
-- `syncAllTabs()`: syncs only `Standings`, `Matches`, and `Games`
-- manual syncs write Webflow IDs and timestamps back into the matching sheet rows
-- manual refresh actions pull current Webflow values back into the matching sheet tab
+- `refreshCurrentTabFromWebflow()`: refreshes the currently active mapped tab from Webflow
+- changed-row syncs write Webflow IDs and timestamps back into the matching sheet rows
+- refresh actions pull current Webflow values back into the active sheet tab
 
 Dirty row behavior:
 
 - row edits on mapped tabs mark that row as dirty
-- successful manual syncs clear the dirty flag for rows they sync successfully
+- successful changed-row syncs clear the dirty flag for rows they sync successfully
 - `Sync Changed Rows (Current Tab)` sends only rows still marked dirty on the active tab
 
 ## Operational Notes

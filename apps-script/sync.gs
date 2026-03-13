@@ -17,15 +17,8 @@ function onOpen() {
 function buildSyncMenu_() {
   SpreadsheetApp.getUi()
     .createMenu('Webflow Sync')
-    .addItem('Sync Standings', 'syncStandings')
-    .addItem('Refresh Standings from Webflow', 'refreshStandingsFromWebflow')
-    .addItem('Sync Matches', 'syncMatches')
-    .addItem('Refresh Matches from Webflow', 'refreshMatchesFromWebflow')
-    .addItem('Sync Games', 'syncGames')
-    .addItem('Refresh Games from Webflow', 'refreshGamesFromWebflow')
-    .addItem('Sync Changed Rows (Current Tab)', 'syncChangedRows')
-    .addSeparator()
-    .addItem('Sync All Score Tabs', 'syncAllTabs')
+    .addItem('Push Changed Rows to Webflow', 'syncChangedRows')
+    .addItem('Pull Current Tab from Webflow', 'refreshCurrentTabFromWebflow')
     .addToUi();
 }
 
@@ -40,36 +33,6 @@ function installSyncTrigger() {
   });
 
   ScriptApp.newTrigger('handleSheetEdit').forSpreadsheet(spreadsheet).onEdit().create();
-}
-
-function syncStandings() {
-  syncSheetByName_('Standings');
-}
-
-function syncMatches() {
-  syncSheetByName_('Matches');
-}
-
-function syncGames() {
-  syncSheetByName_('Games');
-}
-
-function refreshStandingsFromWebflow() {
-  refreshSheetFromWebflow_('Standings');
-}
-
-function refreshMatchesFromWebflow() {
-  refreshSheetFromWebflow_('Matches');
-}
-
-function refreshGamesFromWebflow() {
-  refreshSheetFromWebflow_('Games');
-}
-
-function syncAllTabs() {
-  ['Standings', 'Matches', 'Games'].forEach((sheetName) => {
-    syncSheetByName_(sheetName);
-  });
 }
 
 function syncChangedRows() {
@@ -89,6 +52,18 @@ function syncChangedRows() {
   }
 
   syncDirtyRows_(sheet, collectionKey, dirtyRows);
+}
+
+function refreshCurrentTabFromWebflow() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const sheetName = sheet.getName();
+  const collectionKey = SHEET_TO_COLLECTION[sheetName];
+
+  if (!collectionKey) {
+    throw new Error(`Current sheet is not configured for refresh: ${sheetName}`);
+  }
+
+  refreshSheetFromWebflow_(sheetName);
 }
 
 function handleSheetEdit(event) {
@@ -159,64 +134,6 @@ function getDirtyRows_(sheetName) {
     .map((key) => Number(key.slice(prefix.length)))
     .filter((rowNumber) => Number.isInteger(rowNumber) && rowNumber > 1)
     .sort((left, right) => left - right);
-}
-
-function syncSheetByName_(sheetName) {
-  const spreadsheet = SpreadsheetApp.getActive();
-  const sheet = spreadsheet.getSheetByName(sheetName);
-
-  if (!sheet) {
-    throw new Error(`Sheet not found: ${sheetName}`);
-  }
-
-  const collectionKey = SHEET_TO_COLLECTION[sheetName];
-
-  if (!collectionKey) {
-    throw new Error(`Sheet is not configured for sync: ${sheetName}`);
-  }
-
-  const csvText = buildCsvFromSheet_(sheet);
-
-  if (!csvText) {
-    console.log(`Sync skipped: no data rows found for "${sheetName}"`);
-    return;
-  }
-
-  const response = UrlFetchApp.fetch(HEROKU_SYNC_URL, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: {
-      'x-sync-secret': SYNC_SHARED_SECRET
-    },
-    payload: JSON.stringify({
-      collectionKey,
-      csvText,
-      mode: DEFAULT_MODE,
-      dryRun: false
-    }),
-    muteHttpExceptions: true
-  });
-
-  const status = response.getResponseCode();
-  const body = response.getContentText();
-  const result = parseSyncResponse_(body);
-
-  console.log(
-    JSON.stringify({
-      message: 'Manual sync response received',
-      sheetName,
-      collectionKey,
-      status,
-      body
-    })
-  );
-
-  if (status >= 300) {
-    throw new Error(`Manual sync failed for ${sheetName} (${status}): ${body}`);
-  }
-
-  writeBackSheetSyncResults_(sheet, result);
-  console.log(`Manual sync completed for ${sheetName}: ${body}`);
 }
 
 function refreshSheetFromWebflow_(sheetName) {
