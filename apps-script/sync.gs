@@ -14,11 +14,18 @@ function onOpen() {
   buildSyncMenu_();
 }
 
+function onEdit(event) {
+  handleSheetEdit(event);
+}
+
 function buildSyncMenu_() {
   SpreadsheetApp.getUi()
     .createMenu('Webflow Sync')
     .addItem('Push Changed Rows to Webflow', 'syncChangedRows')
     .addItem('Pull Current Tab from Webflow', 'refreshCurrentTabFromWebflow')
+    .addSeparator()
+    .addItem('Mark Current Row Dirty', 'markCurrentRowDirty')
+    .addItem('Clear Current Row Dirty', 'clearCurrentRowDirty')
     .addToUi();
 }
 
@@ -64,6 +71,44 @@ function refreshCurrentTabFromWebflow() {
   }
 
   refreshSheetFromWebflow_(sheetName);
+}
+
+function markCurrentRowDirty() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const sheetName = sheet.getName();
+  const collectionKey = SHEET_TO_COLLECTION[sheetName];
+  const rowNumber = sheet.getActiveRange().getRow();
+
+  if (!collectionKey) {
+    throw new Error(`Current sheet is not configured for dirty-row tracking: ${sheetName}`);
+  }
+
+  if (rowNumber < 2) {
+    throw new Error('Select a data row to mark dirty.');
+  }
+
+  markDirtyRow_(sheetName, rowNumber);
+  highlightDirtyRow_(sheet, rowNumber);
+  console.log(`Dirty row manually marked for "${sheetName}" row ${rowNumber}`);
+}
+
+function clearCurrentRowDirty() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const sheetName = sheet.getName();
+  const collectionKey = SHEET_TO_COLLECTION[sheetName];
+  const rowNumber = sheet.getActiveRange().getRow();
+
+  if (!collectionKey) {
+    throw new Error(`Current sheet is not configured for dirty-row tracking: ${sheetName}`);
+  }
+
+  if (rowNumber < 2) {
+    throw new Error('Select a data row to clear.');
+  }
+
+  clearDirtyRow_(sheetName, rowNumber);
+  clearDirtyRowHighlight_(sheet, rowNumber);
+  console.log(`Dirty row manually cleared for "${sheetName}" row ${rowNumber}`);
 }
 
 function handleSheetEdit(event) {

@@ -1,0 +1,104 @@
+.c_scoreboard {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+}
+
+.c_scoreboard::before,
+.c_scoreboard::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+  background: linear-gradient(to right, var(--_theme---background), transparent);
+}
+
+.c_scoreboard::before {
+  left: 0;
+}
+
+.c_scoreboard::after {
+  right: 0;
+  transform: scaleX(-1);
+}
+
+.c_scoreboard.scrolled-to-start::before {
+  opacity: 0;
+}
+
+.c_scoreboard.scrolled-to-end::after {
+  opacity: 0;
+}
+
+.c_scoreboard-wrap {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
+}
+
+.c_scoreboard-wrap::-webkit-scrollbar {
+  display: none;
+}
+
+.c_scoreboard-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--_theme---background);
+  color: #1f1f1f;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.c_scoreboard-arrow svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.c_scoreboard-arrow.is-left {
+  left: 8px;
+}
+
+.c_scoreboard-arrow.is-right {
+  right: 8px;
+}
+
+.c_scoreboard-arrow:hover:not(:disabled) {
+  transform: translateY(-50%) scale(1.05);
+}
+
+.c_scoreboard-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.c_scoreboard-arrows {
+  pointer-events: none;
+}
+
+.c_scoreboard-arrows .c_scoreboard-arrow {
+  pointer-events: auto;
+}
+
+@media screen and (max-width: 767px) {
+  .c_scoreboard-arrow {
+    display: none;
+  }
+}
